@@ -142,6 +142,7 @@ enum NotifierImplHandle {
 struct NotifierImpl {
     should_reload: bool,
     should_reload_callback: Option<Box<dyn Fn() -> bool + Send + Sync + 'static>>,
+    on_should_reload_callback: Option<Box<dyn Fn() + Send + 'static>>,
     fast_reload: bool,
     #[cfg(feature = "watch-fs")]
     fs_watcher: Option<notify::RecommendedWatcher>,
@@ -160,6 +161,10 @@ impl Notifier {
     pub fn request_reload(&self) {
         if let Some(handle) = self.handle() {
             handle.lock().unwrap().should_reload = true;
+
+            if let Some(callback) = handle.lock().unwrap().on_should_reload_callback.as_ref() {
+                (callback)();
+            }
         }
     }
 
@@ -192,6 +197,22 @@ impl Notifier {
     {
         if let Some(handle) = self.handle() {
             handle.lock().unwrap().should_reload_callback = Some(Box::new(f));
+        }
+    }
+
+    /// Registers a callback that is invoked when changes are detected, which
+    /// would cause a reload.
+    ///
+    /// When the auto reloader checks if it should reload and it returns `true`,
+    /// this callback will be invoked. This callback is invoced  before the
+    /// environment is reloaded. If this is invoked another time, the old
+    /// callback is removed.
+    pub fn on_should_reload<F>(&self, f: F)
+    where
+        F: Fn() + Send + 'static,
+    {
+        if let Some(handle) = self.handle() {
+            handle.lock().unwrap().on_should_reload_callback = Some(Box::new(f));
         }
     }
 
@@ -301,6 +322,12 @@ impl Notifier {
                     ) {
                         if let Some(inner) = weak_handle.upgrade() {
                             inner.lock().unwrap().should_reload = true;
+
+                            if let Some(callback) =
+                                inner.lock().unwrap().on_should_reload_callback.as_ref()
+                            {
+                                (callback)();
+                            }
                         }
                     }
                 })
